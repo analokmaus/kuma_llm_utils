@@ -11,9 +11,9 @@ from .abstract import AbstractLLMEngine, AbstractLLMWorker
 
 
 vllm_model_default_params = dict(
-    model='google/gemma-2-27b-it',
+    model='google/gemma-2-2b-it',
     dtype=torch.bfloat16,
-    gpu_memory_utilization=0.9,
+    gpu_memory_utilization=0.8,
     quantization='bitsandbytes',
     load_format='bitsandbytes',
     trust_remote_code=True,

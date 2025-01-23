@@ -14,6 +14,7 @@ class DefaultLogger:
 
     def get_logger(self, name: str = 'default'):
         logger = logging.getLogger(name)
+        formatter = logging.Formatter("%(asctime)s - %(lineno)-4d - %(levelname)-8s - %(message)s")
         logger.setLevel(self.default_level)
         for handler in logger.handlers[:]:
             logger.removeHandler(handler)
@@ -29,5 +30,4 @@ class DefaultLogger:
             sh.setFormatter(formatter)
             logger.addHandler(sh)
 
-        formatter = logging.Formatter("%(asctime)s - %(lineno)-4d - %(levelname)-8s - %(message)s")
         return logger

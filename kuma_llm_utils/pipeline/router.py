@@ -10,8 +10,8 @@ class LLMRouter(AbstractPipeline):
             self,
             route_llm: AbstractLLMWorker,
             job_pipeline: dict[str, AbstractPipeline],
-            input_keys: list = ['chat_history', 'question'],
-            output_keys: list = ['chat_history', 'question']):
+            input_keys: list = ['question'],
+            output_keys: list = ['question']):
         super().__init__()
         self.route_llm = route_llm
         self.job_pipeline = job_pipeline
@@ -42,8 +42,8 @@ class KeyRouter(AbstractPipeline):
             self,
             target_key: str,
             job_pipeline: dict[str, AbstractPipeline],
-            input_keys: list = ['chat_history', 'question'],
-            output_keys: list = ['chat_history', 'question']):
+            input_keys: list = ['question'],
+            output_keys: list = ['question']):
         super().__init__()
         self.target_key = target_key
         self.job_pipeline = job_pipeline

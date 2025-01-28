@@ -67,20 +67,23 @@ class vLLMEngineAsync(AbstractLLMEngine):
         tokenizer = await self.get_tokenizer()
         results_generator = self.engine.generate(
             prompt, sampling_params, request_id)
-        output = None
+        response = None
         async for request_output in results_generator:
-            output = request_output
-        prompt = output.prompt
-        output = [output.text for output in output.outputs][0]
+            response = request_output
+        prompt = response.prompt
+        output = [output.text for output in response.outputs][0]
         input_tokens = len(tokenizer.encode(prompt, add_special_tokens=False))
         output_tokens = len(tokenizer.encode(output, add_special_tokens=False))
         self.logger.info(f'{self.name} input tokens = {input_tokens} | output tokens = {output_tokens}')
-        return {
+        response_dict = {
             'input': prompt,
             'output': output,
             'input_tokens': input_tokens,
-            'output_tokens': output_tokens
+            'output_tokens': output_tokens,
         }
+        if hasattr(response, 'prompt_logprobs'):
+            response_dict['prompt_logprobs'] = response.prompt_logprobs
+        return response_dict
 
     async def get_tokenizer(self):
         tokenizer = await self.engine.get_tokenizer()
@@ -98,8 +101,8 @@ class vLLMEngineAsync(AbstractLLMEngine):
     async def generate_batched(self, prompts: list[str], sampling_params: SamplingParams):
         tasks = [asyncio.create_task(
             self._async_generate(
-                prompt=prompt, 
-                sampling_params=sampling_params, 
+                prompt=prompt,
+                sampling_params=sampling_params,
                 request_id=uuid.uuid4())) for prompt in prompts]
         responses = [await task for task in tasks]
         return responses
@@ -194,6 +197,18 @@ class vLLMWorkerAsync(AbstractLLMWorker):
         prompt_text = self.tokenizer.apply_chat_template(
             parsed_inputs, tokenize=False, add_generation_prompt=True)
         return prompt_text
+    
+    def _parse_logprobs(self, logprobs: list):
+        logprobs_json = []
+        for logprob in logprobs:
+            if logprob is None:
+                continue
+            for v in logprob.values():
+                logprobs_json.append(dict(
+                    token=v.decoded_token,
+                    logprob=v.logprob
+                ))
+        return logprobs_json
 
     def _check_template(self):
         template_fields = set(re.findall(r'{([^{}]*)}', self.template))
@@ -206,12 +221,15 @@ class vLLMWorkerAsync(AbstractLLMWorker):
         text = text.strip()
         return text
 
-    async def generate(self, inputs: list[dict]):
+    async def generate(self, inputs: list[dict], return_logprobs: bool = False):
         response = await self.engine.generate(self._parse_inputs(inputs), self.generation_params)
         decoded_output = response['output']
         if self.remove_reasoning_tag:
             decoded_output = self._remove_reasoning_tag(decoded_output)
-        return decoded_output
+        if return_logprobs:
+            return decoded_output, self._parse_logprobs(response['prompt_logprobs'])
+        else:
+            return decoded_output
 
     async def generate_batched(self, inputs: list[list], batch_size: int = 4):
         messages = [self._parse_inputs(inputs_item) for inputs_item in inputs]

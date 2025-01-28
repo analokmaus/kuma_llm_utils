@@ -14,8 +14,8 @@ from ..utils import create_batches, load_image_for_llm
 
 google_ai_default_limits = {
     "gemini-2.0-flash": [
-        {"request": 15, "reset_cycle": 60},
-        {"request": 1500, "reset_cycle": 3600 * 24},
+        {"request": 12, "reset_cycle": 60},
+        {"request": 1400, "reset_cycle": 3600 * 24},
     ]
 }
 google_ai_default_params = {

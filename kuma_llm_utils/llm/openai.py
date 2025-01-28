@@ -217,6 +217,15 @@ class OpenAIWorker(AbstractLLMWorker):
                 "content": [{"type": "text", "text": self.system_prompt}]
             })
         return parsed_inputs
+    
+    def _parse_logprobs(self, logprobs):
+        logprobs_json = []
+        for logprob in logprobs.content:
+            logprobs_json.append(dict(
+                token=logprob.token,
+                logprob=logprob.logprob
+            ))
+        return logprobs_json
 
     def _check_template(self):
         template_fields = set(re.findall(r'{([^{}]*)}', self.template))
@@ -224,10 +233,13 @@ class OpenAIWorker(AbstractLLMWorker):
         if len(missing_fields) > 0:
             raise ValueError(f'{self.name} fields {missing_fields} are required in prompt template.')
 
-    async def generate(self, inputs: list[dict]):
+    async def generate(self, inputs: list[dict], return_logprobs: bool = False):
         response = await self.engine.generate(self._parse_inputs(inputs), self.generation_params)
         decoded_output = response.choices[0].message.content
-        return decoded_output
+        if return_logprobs:
+            return decoded_output, self._parse_logprobs(response.choices[0].logprobs)
+        else:
+            return decoded_output
 
     async def generate_parallel(self, inputs: list[list], batch_size: int = 4):
         messages = [self._parse_inputs(inputs_item) for inputs_item in inputs]

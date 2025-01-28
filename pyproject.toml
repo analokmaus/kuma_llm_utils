@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "kuma_llm_utils"
-version = "0.2.0"
+version = "0.3.0"
 description = ""
 authors = ["Hiroshi Yoshihara"]
 readme = "README.md"
@@ -10,7 +10,7 @@ python = ">=3.10,<3.13"
 torch = {version = "^2.5.0", source = "torch_cu121"}
 torchvision = {version = "^0.20.0", source = "torch_cu121"}
 torchaudio = {version = "^2.5.0", source = "torch_cu121"}
-transformers = "^4.36.0"
+transformers = "^4.47.0"
 langchain = "0.1.0"
 accelerate = "^0.26.0"
 bitsandbytes = "^0.45.0"

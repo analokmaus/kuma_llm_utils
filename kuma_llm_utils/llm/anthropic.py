@@ -2,13 +2,11 @@ import anthropic
 import os
 import re
 import asyncio
-import httpx
-import base64
 from pathlib import Path
 from PIL import Image
 from collections import defaultdict
 
-from ..utils import create_batches, pil_to_base64, is_url
+from ..utils import create_batches, load_image_for_llm
 from .abstract import AbstractLLMEngine, AbstractLLMWorker
 from .utils import LimitManager
 
@@ -39,6 +37,30 @@ anthropic_default_limits = {
 
 
 class AnthropicClient(AbstractLLMEngine):
+    """A client class for interacting with the Anthropic API.
+    This class provides an interface to generate responses using Anthropic's language models,
+    with built-in usage limits management and async support.
+    Args:
+        api_key (str, optional): The Anthropic API key. If not provided, will attempt to retrieve from environment variables.
+        usage_limits (dict, optional): Dictionary defining usage limits for different models. Defaults to anthropic_default_limits.
+    Attributes:
+        api_key (str): The provided API key.
+        client (anthropic.Anthropic): The Anthropic client instance.
+        usage_limits (defaultdict): Dictionary storing LimitManager instances for each model.
+    Methods:
+        generate(message, generation_params):
+            Asynchronously generates a single response.
+        generate_parallel(messages, generation_params):
+            Asynchronously generates multiple responses in parallel.
+    Example:
+        >>> client = AnthropicClient(api_key="your-api-key")
+        >>> response = await client.generate(message, {"model": "claude-2"})
+    Note:
+        - Requires valid Anthropic API credentials
+        - Implements rate limiting and usage tracking
+        - Inherits from AbstractLLMEngine
+    """
+
     def __init__(
             self,
             api_key: str = None,
@@ -58,6 +80,7 @@ class AnthropicClient(AbstractLLMEngine):
                 await manager.check()
 
     def _update_counter(self, model_name: str, usage: dict):
+        self.logger.info(f'{self.name} {model_name} {usage}')
         for manager in self.usage_limits[model_name]:
             manager.add(usage)
 
@@ -94,6 +117,35 @@ class AnthropicClient(AbstractLLMEngine):
 
 
 class AnthropicWorker(AbstractLLMWorker):
+    """
+    A worker class for handling interactions with Anthropic's API.
+    This class implements the AbstractLLMWorker interface for Anthropic's language models,
+    providing methods for generating text responses both individually and in parallel.
+    Args:
+        engine (AnthropicClient): The client instance for interacting with Anthropic's API.
+        prompt_template (str, optional): Template string for formatting prompts. Defaults to ''.
+        prompt_default_fields (dict, optional): Default fields to use in the prompt template. Defaults to {}.
+        prompt_required_fields (list[str], optional): List of required fields in the prompt template. Defaults to [].
+        system_prompt (str, optional): System prompt to prepend to all interactions. Defaults to None.
+        generation_params (dict, optional): Parameters for text generation. Defaults to anthropic_default_params.
+    Attributes:
+        engine (AnthropicClient): The Anthropic client instance.
+        template (str): The prompt template string.
+        prompt_default_fields (dict): Default fields for the prompt template.
+        prompt_required_fields (list[str]): Required fields for the prompt template.
+        system_prompt (str): The system prompt.
+        generation_params (dict): Parameters for text generation.
+        is_async (bool): Indicates that this worker operates asynchronously.
+    Methods:
+        generate(inputs: list[dict]): Generate a single response from the model.
+        generate_parallel(inputs: list[list], batch_size: int = 4): Generate multiple responses in parallel.
+        generate_parallel_streaming(inputs: list[list], batch_size: int = 4): Stream multiple responses in parallel.
+        generate_batched(inputs: list[list], batch_size: int = 4): Not implemented.
+        generate_batched_streaming(inputs: list[list], batch_size: int = 4): Not implemented.
+    Raises:
+        ValueError: If required fields are missing in the prompt template or if an unsupported role is provided.
+    """
+
 
     def __init__(
             self,
@@ -128,12 +180,30 @@ class AnthropicWorker(AbstractLLMWorker):
                 ]
             }
         ]
+        return messages
+
+    def _parse_inputs(self, inputs: list[dict]):
+        parsed_inputs = []
+        for input_dict in inputs:
+            if 'role' not in input_dict.keys():
+                input_dict['role'] = 'user'
+            role = input_dict.pop('role')
+            if role == 'user':
+                parsed_input = self._get_prompt(**input_dict)
+            elif role == 'assistant':
+                parsed_input = [{
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": input_dict['text']}],
+                }]
+            else:
+                raise ValueError(f'{self.name} role {role} is not supported.')
+            parsed_inputs.extend(parsed_input)
         if self.system_prompt is not None:
-            messages.insert(0, {
+            parsed_inputs.insert(0, {
                 "role": "system",
                 "content": [{"type": "text", "text": self.system_prompt}]
             })
-        return messages
+        return parsed_inputs
 
     def _check_template(self):
         template_fields = set(re.findall(r'{([^{}]*)}', self.template))
@@ -141,13 +211,13 @@ class AnthropicWorker(AbstractLLMWorker):
         if len(missing_fields) > 0:
             raise ValueError(f'{self.name} fields {missing_fields} are required in prompt template.')
 
-    async def generate(self, **kwargs):
-        response = await self.engine.generate(self._get_prompt(**kwargs), self.generation_params)
+    async def generate(self, inputs: list[dict]):
+        response = await self.engine.generate(self._parse_inputs(inputs), self.generation_params)
         decoded_output = response.content[0].text
         return decoded_output
 
-    async def generate_parallel(self, inputs: list[dict], batch_size: int = 4):
-        messages = [self._get_prompt(**kwargs) for kwargs in inputs]
+    async def generate_parallel(self, inputs: list[list], batch_size: int = 4):
+        messages = [self._parse_inputs(inputs_item) for inputs_item in inputs]
         messages_batches = create_batches(messages, batch_size)
 
         decoded_outputs = []
@@ -163,8 +233,8 @@ class AnthropicWorker(AbstractLLMWorker):
 
         return decoded_outputs
 
-    async def generate_parallel_streaming(self, inputs: list[dict], batch_size: int = 4):
-        messages = [self._get_prompt(**kwargs) for kwargs in inputs]
+    async def generate_parallel_streaming(self, inputs: list[list], batch_size: int = 4):
+        messages = [self._parse_inputs(inputs_item) for inputs_item in inputs]
         messages_batches = create_batches(messages, batch_size)
 
         for batch_i, batch in enumerate(messages_batches):
@@ -180,14 +250,51 @@ class AnthropicWorker(AbstractLLMWorker):
 
             yield decoded_output_batch
 
-    async def generate_batched(self, inputs: list[dict], batch_size: int = 4):
+    async def generate_batched(self, inputs: list[list], batch_size: int = 4):
         raise NotImplementedError(f'{self.name} batch inference is not yet implemented.')
 
-    async def generate_batched_streaming(self, inputs: list[dict], batch_size: int = 4):
+    async def generate_batched_streaming(self, inputs: list[list], batch_size: int = 4):
         raise NotImplementedError(f'{self.name} batch inference is not yet implemented.')
 
 
 class AnthropicVisionWorker(AnthropicWorker):
+    """
+    A specialized worker class for handling vision-based tasks with Anthropic's API.
+    Extends AnthropicWorker to include image processing capabilities.
+    This class provides functionality to:
+    - Process and resize images to meet Anthropic's API requirements
+    - Handle multiple image input formats (URL, file path, PIL Image)
+    - Convert images to base64 format for API transmission
+    Parameters
+    ----------
+    engine : AnthropicClient
+        The Anthropic API client instance
+    prompt_template : str, optional
+        Template string for formatting prompts
+    prompt_default_fields : dict, optional
+        Default field values for prompt template
+    prompt_required_fields : list[str], optional
+        List of required fields for prompt template
+    system_prompt : str, optional
+        System-level prompt for the model
+    generation_params : dict, optional
+        Parameters for text generation (defaults to anthropic_default_params)
+    image_max_size : int, optional
+        Maximum dimension (width or height) for images (default: 1568)
+    Methods
+    -------
+    _resize_image(image: Image.Image)
+        Resizes an image while maintaining aspect ratio if it exceeds max_size
+    _process_image(image: str | Path | Image.Image)
+        Processes different image input formats into base64 for API transmission
+    _get_prompt(**kwargs)
+        Generates a formatted prompt including image content for the API
+    Notes
+    -----
+    - Images larger than image_max_size will be automatically resized
+    - Supported image input formats: URL, file path, PIL Image
+    - Images are converted to PNG format when processed from PIL Image objects
+    """
 
     def __init__(
             self,
@@ -209,64 +316,27 @@ class AnthropicVisionWorker(AnthropicWorker):
         )
         self.image_max_size = image_max_size
 
-    def _resize_image(self, image: Image.Image):
-        width, height = image.size
-        max_size = self.image_max_size
-        if max(width, height) < max_size:
-            return image
-        if width > height:
-            new_width = max_size
-            new_height = int((max_size / width) * height)
-        else:
-            new_height = max_size
-            new_width = int((max_size / height) * width)
-        image_resized = image.resize((new_width, new_height), Image.BICUBIC)
-        self.logger.info(f'{self.name} image resized ({width}, {height}) -> ({new_width}, {new_height})')
-        return image_resized
-
     def _process_image(self, image: str | Path | Image.Image):
-        if isinstance(image, str | Path):
-            if is_url(image):
-                base64_image = base64.standard_b64encode(httpx.get(image).content).decode("utf-8")
-                media_type = f'image/{Path(image).suffix}'
-            else:
-                pil_img = Image.open(image)
-                pil_img = self._resize_image(pil_img)
-                base64_image = pil_to_base64(pil_img, 'png')
-                media_type = 'image/png'
-
-        elif isinstance(image, Image.Image):
-            image = self._resize_image(image)
-            base64_image = pil_to_base64(image, 'png')
-            media_type = 'image/png'
-        return dict(type='base64', media_type=media_type, data=base64_image)
+        base64_image, media_type = load_image_for_llm(image, self.image_max_size)
+        return dict(
+            type='image',
+            source=dict(type='base64', media_type=media_type, data=base64_image))
 
     def _get_prompt(self, **kwargs):
-        if 'image' in kwargs.keys():
-            image = kwargs.pop('image')
-            image_content = self._process_image(image)
-        else:
-            raise ValueError('image must be attached.')
+        image_contents = []
+        image_keys = [k for k in kwargs.keys() if re.match(r'^image(\d)*$', k)]
+        for k in image_keys:
+            image = kwargs.pop(k)
+            image_contents.append(self._process_image(image))
         prompt_fields = self.prompt_default_fields.copy()
         prompt_fields.update(kwargs)
         messages = [
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": self.template.format(**prompt_fields),
-                    },
-                    {
-                        "type": "image",
-                        "source": image_content,
-                    }
-                ]
+                "content": [{
+                    "type": "text",
+                    "text": self.template.format(**prompt_fields),
+                }] + image_contents
             }
         ]
-        if self.system_prompt is not None:
-            messages.insert(0, {
-                "role": "system",
-                "content": [{"type": "text", "text": self.system_prompt}]
-            })
         return messages

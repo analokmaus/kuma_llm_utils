@@ -6,7 +6,7 @@ from pathlib import Path
 from PIL import Image
 from collections import defaultdict
 
-from ..utils import create_batches, pil_to_base64, is_url
+from ..utils import create_batches, load_image_for_llm
 from .abstract import AbstractLLMEngine, AbstractLLMWorker
 from .utils import LimitManager
 
@@ -29,6 +29,32 @@ openai_default_limits = {
 
 
 class OpenAIClient(AbstractLLMEngine):
+    """A client class for interacting with OpenAI's API.
+    This class implements the AbstractLLMEngine interface to provide OpenAI-specific
+    functionality for generating text completions. It handles API key management,
+    usage limits, and both synchronous and asynchronous text generation.
+    Args:
+        api_key (str, optional): OpenAI API key. If not provided, will attempt to retrieve
+            from environment variable 'OPENAI_API_KEY'.
+        usage_limits (dict, optional): Dictionary defining usage limits for different models.
+            Defaults to openai_default_limits.
+    Attributes:
+        api_key (str): The provided API key.
+        client (openai.OpenAI): The OpenAI client instance.
+        usage_limits (defaultdict): Dictionary containing LimitManager instances for each model.
+    Methods:
+        generate(message, generation_params): 
+            Asynchronously generates a completion for a single message.
+        generate_parallel(messages, generation_params):
+            Asynchronously generates completions for multiple messages in parallel.
+    Example:
+        >>> client = OpenAIClient(api_key="your-api-key")
+        >>> response = await client.generate(
+        ...     message=[{"role": "user", "content": "Hello"}],
+        ...     generation_params={"model": "gpt-3.5-turbo"}
+        ... )
+    """
+    
     def __init__(
             self,
             api_key: str = None,
@@ -85,6 +111,45 @@ class OpenAIClient(AbstractLLMEngine):
 
 
 class OpenAIWorker(AbstractLLMWorker):
+    """
+    A worker class for handling OpenAI API interactions with templated prompts and batched generation capabilities.
+    This class implements the AbstractLLMWorker interface specifically for OpenAI's API, providing
+    functionality for single and parallel text generation with customizable prompts and system messages.
+    Parameters
+    ----------
+    engine : OpenAIClient
+        The OpenAI client instance used for API communication.
+    prompt_template : str, optional
+        Template string for formatting prompts with placeholders (default: '').
+    prompt_default_fields : dict, optional
+        Default values for prompt template fields (default: {}).
+    prompt_required_fields : list[str], optional
+        List of required field names that must be present in the prompt template (default: []).
+    system_prompt : str, optional
+        System-level prompt to be prepended to all conversations (default: None).
+    generation_params : dict, optional
+        Parameters for text generation (default: openai_default_params).
+    Attributes
+    ----------
+    is_async : bool
+        Indicates that this worker operates asynchronously (True).
+    Methods
+    -------
+    generate(inputs: list[dict]) -> str
+        Asynchronously generates a response for a single input.
+    generate_parallel(inputs: list[list], batch_size: int = 4) -> list
+        Asynchronously generates responses for multiple inputs in parallel.
+    generate_parallel_streaming(inputs: list[list], batch_size: int = 4) -> Generator
+        Asynchronously generates responses for multiple inputs in parallel with streaming.
+    generate_batched(inputs: list[list], batch_size: int = 4)
+        Not implemented.
+    generate_batched_streaming(inputs: list[list], batch_size: int = 4)
+        Not implemented.
+    Raises
+    ------
+    ValueError
+        If required fields are missing from the prompt template or if an unsupported role is provided.
+    """
 
     def __init__(
             self,
@@ -119,12 +184,30 @@ class OpenAIWorker(AbstractLLMWorker):
                 ]
             }
         ]
+        return messages
+
+    def _parse_inputs(self, inputs: list[dict]):
+        parsed_inputs = []
+        for input_dict in inputs:
+            if 'role' not in input_dict.keys():
+                input_dict['role'] = 'user'
+            role = input_dict.pop('role')
+            if role == 'user':
+                parsed_input = self._get_prompt(**input_dict)
+            elif role == 'assistant':
+                parsed_input = [{
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": input_dict['text']}],
+                }]
+            else:
+                raise ValueError(f'{self.name} role {role} is not supported.')
+            parsed_inputs.extend(parsed_input)
         if self.system_prompt is not None:
-            messages.insert(0, {
+            parsed_inputs.insert(0, {
                 "role": "system",
                 "content": [{"type": "text", "text": self.system_prompt}]
             })
-        return messages
+        return parsed_inputs
 
     def _check_template(self):
         template_fields = set(re.findall(r'{([^{}]*)}', self.template))
@@ -132,13 +215,13 @@ class OpenAIWorker(AbstractLLMWorker):
         if len(missing_fields) > 0:
             raise ValueError(f'{self.name} fields {missing_fields} are required in prompt template.')
 
-    async def generate(self, **kwargs):
-        response = await self.engine.generate(self._get_prompt(**kwargs), self.generation_params)
+    async def generate(self, inputs: list[dict]):
+        response = await self.engine.generate(self._parse_inputs(inputs), self.generation_params)
         decoded_output = response.choices[0].message.content
         return decoded_output
 
-    async def generate_parallel(self, inputs: list[dict], batch_size: int = 4):
-        messages = [self._get_prompt(**kwargs) for kwargs in inputs]
+    async def generate_parallel(self, inputs: list[list], batch_size: int = 4):
+        messages = [self._parse_inputs(inputs_item) for inputs_item in inputs]
         messages_batches = create_batches(messages, batch_size)
 
         decoded_outputs = []
@@ -154,8 +237,8 @@ class OpenAIWorker(AbstractLLMWorker):
 
         return decoded_outputs
 
-    async def generate_parallel_streaming(self, inputs: list[dict], batch_size: int = 4):
-        messages = [self._get_prompt(**kwargs) for kwargs in inputs]
+    async def generate_parallel_streaming(self, inputs: list[list], batch_size: int = 4):
+        messages = [self._parse_inputs(inputs_item) for inputs_item in inputs]
         messages_batches = create_batches(messages, batch_size)
 
         for batch_i, batch in enumerate(messages_batches):
@@ -168,14 +251,62 @@ class OpenAIWorker(AbstractLLMWorker):
 
             yield decoded_output_batch
 
-    async def generate_batched(self, inputs: list[dict], batch_size: int = 4):
+    async def generate_batched(self, inputs: list[list], batch_size: int = 4):
         raise NotImplementedError(f'{self.name} batch inference is not yet implemented.')
 
-    async def generate_batched_streaming(self, inputs: list[dict], batch_size: int = 4):
+    async def generate_batched_streaming(self, inputs: list[list], batch_size: int = 4):
         raise NotImplementedError(f'{self.name} batch inference is not yet implemented.')
 
 
 class OpenAIVisionWorker(OpenAIWorker):
+    """
+    A worker class for handling vision-based tasks using OpenAI's GPT-4 Vision API.
+
+    This class extends OpenAIWorker to provide functionality for processing and analyzing images
+    along with text prompts. It handles image resizing, format conversion, and proper message
+    formatting for the OpenAI Vision API.
+
+    Parameters
+    ----------
+    engine : OpenAIClient
+        The OpenAI client instance for making API calls
+    prompt_template : str, optional
+        Template string for formatting prompts
+    prompt_default_fields : dict, optional
+        Default fields to use in the prompt template
+    prompt_required_fields : list[str], optional
+        List of required fields that must be provided in the prompt
+    system_prompt : str, optional
+        System-level prompt to guide the model's behavior
+    generation_params : dict, optional
+        Parameters for text generation (defaults to openai_default_params)
+    high_image_quality : bool, optional
+        If True, uses high quality image processing, otherwise low (default: False)
+    image_max_size : int, optional
+        Maximum size in pixels for image dimension (default: 1568)
+
+    Attributes
+    ----------
+    image_quality : str
+        Quality setting for image processing ('high' or 'low')
+    image_max_size : int
+        Maximum size in pixels for image dimension
+
+    Methods
+    -------
+    _resize_image(image: Image.Image)
+        Resizes an image while maintaining aspect ratio
+    _process_image(image: str | Path | Image.Image)
+        Processes different image input types into API-compatible format
+    _get_prompt(**kwargs)
+        Generates the formatted prompt with image for API request
+
+    Notes
+    -----
+    - Supports image inputs as file paths, URLs, or PIL Image objects
+    - Automatically resizes images that exceed the maximum dimension while preserving aspect ratio
+    - Converts images to base64 encoding when necessary
+    """
 
     def __init__(
             self,
@@ -199,62 +330,28 @@ class OpenAIVisionWorker(OpenAIWorker):
         self.image_quality = "high" if high_image_quality else "low"
         self.image_max_size = image_max_size
 
-    def _resize_image(self, image: Image.Image):
-        width, height = image.size
-        max_size = self.image_max_size
-        if max(width, height) < max_size:
-            return image
-        if width > height:
-            new_width = max_size
-            new_height = int((max_size / width) * height)
-        else:
-            new_height = max_size
-            new_width = int((max_size / height) * width)
-        image_resized = image.resize((new_width, new_height), Image.BICUBIC)
-        self.logger.info(f'{self.name} image resized ({width}, {height}) -> ({new_width}, {new_height})')
-        return image_resized
-
     def _process_image(self, image: str | Path | Image.Image):
-        if isinstance(image, str | Path):
-            if is_url(image):
-                img_url = image
-            else:
-                pil_img = Image.open(image)
-                pil_img = self._resize_image(pil_img)
-                base64_image = pil_to_base64(pil_img, 'png')
-                img_url = f"data:image/png;base64,{base64_image}"
-        elif isinstance(image, Image.Image):
-            image = self._resize_image(image)
-            base64_image = pil_to_base64(image, 'png')
-            img_url = f"data:image/png;base64,{base64_image}"
-        return dict(url=img_url, detail=self.image_quality)
+        base64_image, media_type = load_image_for_llm(image, self.image_max_size)
+        image_url = f"data:{media_type};base64,{base64_image}"
+        return dict(
+            type='image_url',
+            image_url=dict(url=image_url, detail=self.image_quality))
 
     def _get_prompt(self, **kwargs):
-        if 'image' in kwargs.keys():
-            image = kwargs.pop('image')
-            image_content = self._process_image(image)
-        else:
-            raise ValueError('image must be attached.')
+        image_contents = []
+        image_keys = [k for k in kwargs.keys() if re.match(r'^image(\d)*$', k)]
+        for k in image_keys:
+            image = kwargs.pop(k)
+            image_contents.append(self._process_image(image))
         prompt_fields = self.prompt_default_fields.copy()
         prompt_fields.update(kwargs)
         messages = [
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": self.template.format(**prompt_fields),
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": image_content,
-                    }
-                ]
+                "content": [{
+                    "type": "text",
+                    "text": self.template.format(**prompt_fields),
+                }] + image_contents
             }
         ]
-        if self.system_prompt is not None:
-            messages.insert(0, {
-                "role": "system",
-                "content": [{"type": "text", "text": self.system_prompt}]
-            })
         return messages

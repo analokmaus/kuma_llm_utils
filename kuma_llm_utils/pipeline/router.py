@@ -22,7 +22,7 @@ class LLMRouter(AbstractPipeline):
 
     async def generate(self, inputs: dict) -> dict:
         self.check_format(inputs=inputs)
-        route_response = await self.route_llm.generate(**inputs)
+        route_response = await self.route_llm.generate([inputs])
         route = self._postprocess_route(route_response)
         self.logger.info(f'{self.name} route = {route}')
         if route not in self.job_pipeline.keys():

@@ -3,7 +3,7 @@ import re
 
 from .abstract import AbstractPipeline
 from ..llm.abstract import AbstractLLMWorker
-from ..text_utils import load_json_string
+from ..utils import load_json_string
 
 
 class LLMModule(AbstractPipeline):
@@ -32,7 +32,7 @@ class LLMModule(AbstractPipeline):
     async def generate(self, inputs: dict) -> dict:
         self.check_format(inputs=inputs)
         outputs = inputs.copy()
-        response = await self.llm.generate(**inputs)
+        response = await self.llm.generate([inputs])
         if self.mode == 'text':
             outputs[self.output_key] = response
         elif self.mode == 'json':

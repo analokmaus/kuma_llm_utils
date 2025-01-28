@@ -29,6 +29,27 @@ vllm_sampling_default_params = dict(
 
 
 class vLLMEngineAsync(AbstractLLMEngine):
+    """vLLM (very Large Language Model) Engine for asynchronous text generation.
+    This class implements an asynchronous interface for the vLLM engine, providing methods
+    for both single and batched text generation using large language models.
+    Attributes:
+        engine (AsyncLLMEngine): The underlying vLLM engine instance for text generation.
+        logger (Logger): Logger instance for tracking generation statistics.
+        name (str): Name identifier for the engine.
+    Methods:
+        generate(prompt: str, sampling_params: SamplingParams) -> dict:
+            Generates text from a single prompt asynchronously.
+        generate_batched(prompts: list[str], sampling_params: SamplingParams) -> list[dict]:
+            Generates text from multiple prompts in parallel.
+        get_tokenizer() -> PreTrainedTokenizer:
+            Returns the tokenizer associated with the engine.
+    Returns:
+        For both generate and generate_batched methods, returns a dictionary or list of dictionaries with:
+            - input: Original prompt text
+            - output: Generated text
+            - input_tokens: Number of tokens in the input
+            - output_tokens: Number of tokens in the output
+    """
 
     def __init__(
             self,
@@ -75,7 +96,35 @@ class vLLMEngineAsync(AbstractLLMEngine):
 
 
 class vLLMWorkerAsync(AbstractLLMWorker):
-
+    """A worker class for asynchronous text generation using vLLM.
+    This class implements an asynchronous interface for text generation using vLLM engine.
+    It handles prompt templating, batched generation, and streaming outputs.
+    Args:
+        engine (vLLMEngineAsync): The async vLLM engine instance for text generation.
+        prompt_template (str, optional): Template string for formatting prompts. Defaults to ''.
+        prompt_default_fields (dict, optional): Default field values for the prompt template. Defaults to {}.
+        prompt_required_fields (list[str], optional): Required fields that must exist in template. Defaults to [].
+        system_prompt (str, optional): System prompt to prepend to all generations. Defaults to None.
+        generation_params (dict, optional): Parameters for text generation. Defaults to vllm_sampling_default_params.
+        remove_reasoning_tag (bool, optional): Whether to remove <think> tags from output. Defaults to True.
+    Attributes:
+        engine: The vLLM engine instance
+        template: The prompt template string
+        prompt_default_fields: Default values for prompt template fields
+        prompt_required_fields: Required fields for prompt template
+        system_prompt: System prompt for all generations
+        generation_params: Generation parameters as SamplingParams
+        remove_reasoning_tag: Flag to remove reasoning tags
+        tokenizer: The tokenizer from the engine
+        is_async: Always True for this class
+    Methods:
+        generate(inputs): Generate text for a single input
+        generate_batched(inputs, batch_size): Generate text for multiple inputs in batches
+        generate_batched_streaming(inputs, batch_size): Stream generated text for batched inputs
+        generate_parallel: Alias for generate_batched
+        generate_parallel_streaming: Alias for generate_batched_streaming
+    """
+    
     def __init__(
             self,
             engine: vLLMEngineAsync,
@@ -115,28 +164,25 @@ class vLLMWorkerAsync(AbstractLLMWorker):
                 "content": self._fill_template(**kwargs)
             }
         ]
+        return messages
+    
+    def _parse_inputs(self, inputs: list[dict]):
+        parsed_inputs = []
+        for input_dict in inputs:
+            if 'role' not in input_dict.keys():
+                input_dict['role'] = 'user'
+            role = input_dict.pop('role')
+            if role == 'user':
+                parsed_input = self._get_prompt(**input_dict)
+            elif role == 'assistant':
+                parsed_input = [{"role": "assistant", "content": input_dict['text']}]
+            else:
+                raise ValueError(f'{self.name} role {role} is not supported.')
+            parsed_inputs.extend(parsed_input)
         if self.system_prompt is not None:
-            messages.insert(0, {
-                "role": "system",
-                "content": self.system_prompt
-            })
-
-        prompt_text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        return prompt_text
-
-    def _get_prompt_for_chat(self, chat_history: list[dict], question: str):
-        question = self._fill_template(question=question)
-        new_chat_history = chat_history.copy()
-        new_chat_history.append({
-            'role': 'user',
-            'content': question
-        })
-        if self.system_prompt is not None:
-            new_chat_history.insert(0, {
-                "role": "system",
-                "content": self.system_prompt
-            })
-        prompt_text = self.tokenizer.apply_chat_template(new_chat_history, tokenize=False, add_generation_prompt=True)
+            parsed_inputs.insert(0, {"role": "system", "content": self.system_prompt})
+        prompt_text = self.tokenizer.apply_chat_template(
+            parsed_inputs, tokenize=False, add_generation_prompt=True)
         return prompt_text
 
     def _check_template(self):
@@ -150,15 +196,15 @@ class vLLMWorkerAsync(AbstractLLMWorker):
         text = text.strip()
         return text
 
-    async def generate(self, **kwargs):
-        response = await self.engine.generate(self._get_prompt(**kwargs), self.generation_params)
+    async def generate(self, inputs: list[dict]):
+        response = await self.engine.generate(self._parse_inputs(inputs), self.generation_params)
         decoded_output = response['output']
         if self.remove_reasoning_tag:
             decoded_output = self._remove_reasoning_tag(decoded_output)
         return decoded_output
 
-    async def generate_batched(self, inputs: list[dict], batch_size: int = 4):
-        messages = [self._get_prompt(**kwargs) for kwargs in inputs]
+    async def generate_batched(self, inputs: list[list], batch_size: int = 4):
+        messages = [self._parse_inputs(inputs_item) for inputs_item in inputs]
         messages_batches = create_batches(messages, batch_size)
         decoded_outputs = []
         for batch_i, batch in enumerate(messages_batches):
@@ -172,8 +218,8 @@ class vLLMWorkerAsync(AbstractLLMWorker):
 
         return decoded_outputs
 
-    async def generate_batched_streaming(self, inputs: list[dict], batch_size: int = 4):
-        messages = [self._get_prompt(**kwargs) for kwargs in inputs]
+    async def generate_batched_streaming(self, inputs: list[list], batch_size: int = 4):
+        messages = [self._parse_inputs(inputs_item) for inputs_item in inputs]
         messages_batches = create_batches(messages, batch_size)
         for batch_i, batch in enumerate(messages_batches):
             self.logger.info(f'{self.name} processing batch {batch_i+1}/{len(messages_batches)}')
@@ -186,11 +232,3 @@ class vLLMWorkerAsync(AbstractLLMWorker):
 
     generate_parallel = generate_batched
     generate_parallel_streaming = generate_batched_streaming
-
-    async def chat(self, chat_history: str, question: str):
-        response = await self.engine.generate(
-            self._get_prompt(chat_history=chat_history, question=question), self.generation_params)
-        decoded_output = response['output']
-        if self.remove_reasoning_tag:
-            decoded_output = self._remove_reasoning_tag(decoded_output)
-        return decoded_output

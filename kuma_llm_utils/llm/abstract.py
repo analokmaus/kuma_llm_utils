@@ -24,20 +24,17 @@ class AbstractLLMWorker:
     def _check_template(self):
         pass
 
-    async def generate(self, **kwargs):
+    async def generate(self, inputs: list[dict]):
         pass
 
-    async def generate_batched(self, inputs, batch_size):
+    async def generate_batched(self, inputs: list[list], batch_size):
         pass
 
-    async def generate_batched_streaming(self, inputs, batch_size):
+    async def generate_batched_streaming(self, inputs: list[list], batch_size):
         pass
 
-    async def generate_parallel(self, inputs, batch_size):
+    async def generate_parallel(self, inputs: list[list], batch_size):
         pass
 
-    async def generate_parallel_streaming(self, inputs, batch_size):
-        pass
-
-    async def chat(self, chat_history, question):
+    async def generate_parallel_streaming(self, inputs: list[list], batch_size):
         pass

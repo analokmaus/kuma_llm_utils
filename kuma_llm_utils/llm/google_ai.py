@@ -210,8 +210,8 @@ class GoogleAIWorker(AbstractLLMWorker):
         decoded_output = response.text
         return decoded_output
 
-    async def generate_parallel(self, inputs: list[dict], batch_size: int = 4):
-        messages = [self._get_prompt(**kwargs) for kwargs in inputs]
+    async def generate_parallel(self, inputs: list[list], batch_size: int = 4):
+        messages = [self._parse_inputs(inputs_item) for inputs_item in inputs]
         messages_batches = create_batches(messages, batch_size)
 
         decoded_outputs = []
@@ -227,8 +227,8 @@ class GoogleAIWorker(AbstractLLMWorker):
 
         return decoded_outputs
 
-    async def generate_parallel_streaming(self, inputs: list[dict], batch_size: int = 4):
-        messages = [self._get_prompt(**kwargs) for kwargs in inputs]
+    async def generate_parallel_streaming(self, inputs: list[list], batch_size: int = 4):
+        messages = [self._parse_inputs(inputs_item) for inputs_item in inputs]
         messages_batches = create_batches(messages, batch_size)
 
         for batch_i, batch in enumerate(messages_batches):

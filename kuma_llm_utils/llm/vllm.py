@@ -2,11 +2,16 @@ import re
 import asyncio
 import uuid
 import torch
+from pathlib import Path
+from PIL import Image
 
+from transformers import AutoProcessor
+from vllm.inputs import TextPrompt
+from vllm.multimodal import MultiModalDataBuiltins
 from vllm import AsyncLLMEngine, SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 
-from ..utils import create_batches, safe_async_run
+from ..utils import create_batches, safe_async_run, load_image_for_llm
 from .abstract import AbstractLLMEngine, AbstractLLMWorker
 
 
@@ -56,6 +61,7 @@ class vLLMEngineAsync(AbstractLLMEngine):
             vllm_params: dict = vllm_model_default_params):
         super().__init__()
         self.engine = AsyncLLMEngine.from_engine_args(AsyncEngineArgs(**vllm_params))
+        self._model_name = vllm_params['model']
 
     async def _async_generate(self, prompt, sampling_params, request_id):
         tokenizer = await self.get_tokenizer()
@@ -79,6 +85,10 @@ class vLLMEngineAsync(AbstractLLMEngine):
     async def get_tokenizer(self):
         tokenizer = await self.engine.get_tokenizer()
         return tokenizer
+    
+    def get_preprocessor(self):
+        preprocessor = AutoProcessor.from_pretrained(self._model_name)
+        return preprocessor
 
     async def generate(self, prompt: str, sampling_params: SamplingParams):
         response = await asyncio.create_task(self._async_generate(
@@ -232,3 +242,75 @@ class vLLMWorkerAsync(AbstractLLMWorker):
 
     generate_parallel = generate_batched
     generate_parallel_streaming = generate_batched_streaming
+
+
+class vLLMVisionWorkerAsync(vLLMWorkerAsync):
+
+    def __init__(
+            self,
+            engine: vLLMEngineAsync,
+            prompt_template: str = '',
+            prompt_default_fields: dict = {},
+            prompt_required_fields: list[str] = [],
+            system_prompt: str = None,
+            generation_params: dict = vllm_sampling_default_params,
+            remove_reasoning_tag: bool = True,
+            image_max_size: int = 1568):
+        super().__init__(
+            engine=engine,
+            prompt_template=prompt_template,
+            prompt_default_fields=prompt_default_fields,
+            prompt_required_fields=prompt_required_fields,
+            system_prompt=system_prompt,
+            generation_params=generation_params,
+            remove_reasoning_tag=remove_reasoning_tag)
+        self.image_max_size = image_max_size
+        self.preprocessor = self.engine.get_preprocessor()
+
+    def _process_image(self, image: str | Path | Image.Image):
+        pil_image = load_image_for_llm(image, self.image_max_size, return_pil=True)
+        return dict(type='image', image=pil_image)
+
+    def _get_prompt(self, **kwargs):
+        image_contents = []
+        image_keys = [k for k in kwargs.keys() if re.match(r'^image(\d)*$', k)]
+        for k in image_keys:
+            image = kwargs.pop(k)
+            image_contents.append(self._process_image(image))
+        messages = [
+            {
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": self._fill_template(**kwargs),
+                }] + image_contents
+            }
+        ]
+        return messages
+    
+    def _parse_inputs(self, inputs: list[dict]):
+        parsed_inputs = []
+        for input_dict in inputs:
+            if 'role' not in input_dict.keys():
+                input_dict['role'] = 'user'
+            role = input_dict.pop('role')
+            if role == 'user':
+                parsed_input = self._get_prompt(**input_dict)
+            elif role == 'assistant':
+                parsed_input = [{"role": "assistant", "content": input_dict['text']}]
+            else:
+                raise ValueError(f'{self.name} role {role} is not supported.')
+            parsed_inputs.extend(parsed_input)
+        if self.system_prompt is not None:
+            parsed_inputs.insert(0, {"role": "system", "content": self.system_prompt})
+        prompt_text = self.preprocessor.apply_chat_template(
+            parsed_inputs, tokenize=False, add_generation_prompt=True)
+        images = []
+        for msg in parsed_inputs:
+            if msg["role"] == "user":
+                for chunk in msg["content"]:
+                    if chunk["type"] == "image":
+                        images.append(chunk["image"])
+        mm_data = MultiModalDataBuiltins(image=images)
+        prompt = TextPrompt(prompt=prompt_text, multi_modal_data=mm_data)
+        return prompt

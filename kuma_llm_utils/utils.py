@@ -81,7 +81,10 @@ def resize_image(image: Image.Image, max_size: int = 1536):
     return image_resized
 
 
-def load_image_for_llm(image: Image.Image | str | Path, max_size: int = 1536) -> tuple[str, str]:
+def load_image_for_llm(
+        image: Image.Image | str | Path,
+        max_size: int = 1536,
+        return_pil: bool = False) -> tuple[str, str]:
     if isinstance(image, str | Path):
         if is_url(image):
             pil_img = Image.open(BytesIO(httpx.get(image).content))
@@ -92,9 +95,12 @@ def load_image_for_llm(image: Image.Image | str | Path, max_size: int = 1536) ->
     else:
         raise ValueError('Unsupported image type')
     pil_img = resize_image(pil_img, max_size)
-    base64_image = pil_to_base64(pil_img, 'png')
-    media_type = 'image/png'
-    return base64_image, media_type
+    if return_pil:
+        return pil_img
+    else:
+        base64_image = pil_to_base64(pil_img, 'png')
+        media_type = 'image/png'
+        return base64_image, media_type
 
 
 '''

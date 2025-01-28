@@ -157,13 +157,22 @@ class GoogleAIWorker(AbstractLLMWorker):
         self._check_template()
         self.is_async = True
     
+    def _fill_template(self, **kwargs):
+        if self.template == '':
+            if len(kwargs) == 1:
+                return list(kwargs.values())[0]
+            else:
+                return '\n' .join([f'{k}:{v}' for k, v in kwargs.items()])
+        else:
+            prompt_fields = self.prompt_default_fields.copy()
+            prompt_fields.update(kwargs)
+            return self.template.format(**prompt_fields)
+    
     def _get_prompt(self, **kwargs):
-        prompt_fields = self.prompt_default_fields.copy()
-        prompt_fields.update(kwargs)
         messages = [
             types.Content(
                 role='user',
-                parts=[types.Part.from_text(self.template.format(**prompt_fields))]
+                parts=[types.Part.from_text(self._fill_template(**kwargs))]
             )
         ]
         return messages
@@ -309,13 +318,11 @@ class GoogleAIVisionWorker(GoogleAIWorker):
         for k in image_keys:
             image = kwargs.pop(k)
             image_contents.append(self._process_image(image))
-        prompt_fields = self.prompt_default_fields.copy()
-        prompt_fields.update(kwargs)
         messages = [
             types.Content(
                 role='user',
                 parts=[
-                    types.Part.from_text(self.template.format(**prompt_fields))
+                    types.Part.from_text(self._fill_template(**kwargs))
                 ] + image_contents
             )
         ]

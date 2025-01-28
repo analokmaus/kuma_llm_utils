@@ -165,17 +165,26 @@ class AnthropicWorker(AbstractLLMWorker):
         self.generation_params = generation_params
         self._check_template()
         self.is_async = True
+    
+    def _fill_template(self, **kwargs):
+        if self.template == '':
+            if len(kwargs) == 1:
+                return list(kwargs.values())[0]
+            else:
+                return '\n' .join([f'{k}:{v}' for k, v in kwargs.items()])
+        else:
+            prompt_fields = self.prompt_default_fields.copy()
+            prompt_fields.update(kwargs)
+            return self.template.format(**prompt_fields)
 
     def _get_prompt(self, **kwargs):
-        prompt_fields = self.prompt_default_fields.copy()
-        prompt_fields.update(kwargs)
         messages = [
             {
                 "role": "user",
                 "content": [
                     {
                         "type": "text",
-                        "text": self.template.format(**prompt_fields),
+                        "text": self._fill_template(**kwargs),
                     }
                 ]
             }
@@ -328,14 +337,12 @@ class AnthropicVisionWorker(AnthropicWorker):
         for k in image_keys:
             image = kwargs.pop(k)
             image_contents.append(self._process_image(image))
-        prompt_fields = self.prompt_default_fields.copy()
-        prompt_fields.update(kwargs)
         messages = [
             {
                 "role": "user",
                 "content": [{
                     "type": "text",
-                    "text": self.template.format(**prompt_fields),
+                    "text": self._fill_template(**kwargs),
                 }] + image_contents
             }
         ]

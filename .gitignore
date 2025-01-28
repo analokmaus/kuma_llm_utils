@@ -163,5 +163,5 @@ cython_debug/
 
 # Project
 *.lock
-*.ipynb
+/*.ipynb
 set_environ.sh

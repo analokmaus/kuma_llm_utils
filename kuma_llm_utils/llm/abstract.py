@@ -24,7 +24,7 @@ class AbstractLLMWorker:
     def _check_template(self):
         pass
 
-    async def generate(self, inputs: list[dict]):
+    async def generate(self, inputs: dict | list[dict]):
         pass
 
     async def generate_batched(self, inputs: list[list], batch_size):

@@ -220,7 +220,9 @@ class AnthropicWorker(AbstractLLMWorker):
         if len(missing_fields) > 0:
             raise ValueError(f'{self.name} fields {missing_fields} are required in prompt template.')
 
-    async def generate(self, inputs: list[dict]):
+    async def generate(self, inputs: dict | list[dict]):
+        if isinstance(inputs, dict):
+            inputs = [inputs]
         response = await self.engine.generate(self._parse_inputs(inputs), self.generation_params)
         decoded_output = response.content[0].text
         return decoded_output

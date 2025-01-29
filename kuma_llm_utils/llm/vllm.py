@@ -221,7 +221,9 @@ class vLLMWorkerAsync(AbstractLLMWorker):
         text = text.strip()
         return text
 
-    async def generate(self, inputs: list[dict], return_logprobs: bool = False):
+    async def generate(self, inputs: dict | list[dict], return_logprobs: bool = False):
+        if isinstance(inputs, dict):
+            inputs = [inputs]
         response = await self.engine.generate(self._parse_inputs(inputs), self.generation_params)
         decoded_output = response['output']
         if self.remove_reasoning_tag:

@@ -233,7 +233,9 @@ class OpenAIWorker(AbstractLLMWorker):
         if len(missing_fields) > 0:
             raise ValueError(f'{self.name} fields {missing_fields} are required in prompt template.')
 
-    async def generate(self, inputs: list[dict], return_logprobs: bool = False):
+    async def generate(self, inputs: dict | list[dict], return_logprobs: bool = False):
+        if isinstance(inputs, dict):
+            inputs = [inputs]
         response = await self.engine.generate(self._parse_inputs(inputs), self.generation_params)
         decoded_output = response.choices[0].message.content
         if return_logprobs:

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "kuma_llm_utils"
-version = "0.3.1"
+version = "0.3.2"
 description = ""
 authors = ["Hiroshi Yoshihara"]
 readme = "README.md"

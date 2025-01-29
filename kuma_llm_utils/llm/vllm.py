@@ -71,7 +71,7 @@ class vLLMEngineAsync(AbstractLLMEngine):
         async for request_output in results_generator:
             response = request_output
         prompt = response.prompt
-        output = [output.text for output in response.outputs][0]
+        output = response.outputs[0].text
         input_tokens = len(tokenizer.encode(prompt, add_special_tokens=False))
         output_tokens = len(tokenizer.encode(output, add_special_tokens=False))
         self.logger.info(f'{self.name} input tokens = {input_tokens} | output tokens = {output_tokens}')
@@ -81,8 +81,8 @@ class vLLMEngineAsync(AbstractLLMEngine):
             'input_tokens': input_tokens,
             'output_tokens': output_tokens,
         }
-        if hasattr(response, 'prompt_logprobs'):
-            response_dict['prompt_logprobs'] = response.prompt_logprobs
+        if hasattr(response.outputs[0], 'logprobs'):
+            response_dict['logprobs'] = response.outputs[0].logprobs
         return response_dict
 
     async def get_tokenizer(self):
@@ -229,7 +229,7 @@ class vLLMWorkerAsync(AbstractLLMWorker):
         if self.remove_reasoning_tag:
             decoded_output = self._remove_reasoning_tag(decoded_output)
         if return_logprobs:
-            return decoded_output, self._parse_logprobs(response['prompt_logprobs'])
+            return decoded_output, self._parse_logprobs(response['logprobs'])
         else:
             return decoded_output
 

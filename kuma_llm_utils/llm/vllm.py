@@ -27,8 +27,8 @@ vllm_model_default_params = dict(
 
 
 vllm_sampling_default_params = dict(
-    temperature=0.0,
-    top_p=1.0,
+    temperature=0.5,
+    top_p=0.1,
     max_tokens=1024
 )
 
@@ -187,7 +187,7 @@ class vLLMWorkerAsync(AbstractLLMWorker):
             role = input_dict.pop('role')
             if role == 'user':
                 parsed_input = self._get_prompt(**input_dict)
-            elif role == 'assistant':
+            elif role in ['assistant', 'model']:
                 parsed_input = [{"role": "assistant", "content": input_dict['text']}]
             else:
                 raise ValueError(f'{self.name} role {role} is not supported.')
@@ -316,7 +316,7 @@ class vLLMVisionWorkerAsync(vLLMWorkerAsync):
             role = input_dict.pop('role')
             if role == 'user':
                 parsed_input = self._get_prompt(**input_dict)
-            elif role == 'assistant':
+            elif role in ['assistant', 'model']:
                 parsed_input = [{"role": "assistant", "content": input_dict['text']}]
             else:
                 raise ValueError(f'{self.name} role {role} is not supported.')

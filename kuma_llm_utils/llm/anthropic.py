@@ -199,7 +199,7 @@ class AnthropicWorker(AbstractLLMWorker):
             role = input_dict.pop('role')
             if role == 'user':
                 parsed_input = self._get_prompt(**input_dict)
-            elif role == 'assistant':
+            elif role in ['assistant', 'model']:
                 parsed_input = [{
                     "role": "assistant",
                     "content": [{"type": "text", "text": input_dict['text']}],

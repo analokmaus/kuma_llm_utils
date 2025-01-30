@@ -27,8 +27,8 @@ vllm_model_default_params = dict(
 
 
 vllm_sampling_default_params = dict(
-    temperature=0.5,
-    top_p=0.1,
+    temperature=0.,
+    top_p=1.,
     max_tokens=1024
 )
 

@@ -13,13 +13,13 @@ from ..utils import create_batches, load_image_for_llm
 
 
 google_ai_default_limits = {
-    "gemini-2.0-flash": [
-        {"request": 12, "reset_cycle": 60},
-        {"request": 1400, "reset_cycle": 3600 * 24},
-    ]
+    "gemini-2.0-flash-exp": [{"request": 8, "reset_cycle": 60}],
+    "gemini-2.0-flash-thinkig-exp": [{"request": 8, "reset_cycle": 60}],
 }
+
+
 google_ai_default_params = {
-    'model': 'gemini-2.0-flash',
+    'model': 'gemini-2.0-flash-exp',
     'max_out_tokens': 1024,
     'temperature': 0.5,
     'top_p': 0.5,

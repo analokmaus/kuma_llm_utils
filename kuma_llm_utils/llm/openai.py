@@ -97,6 +97,8 @@ class OpenAIClient(AbstractLLMEngine):
         self._update_counter(
             generation_params['model'],
             {'request': 1,
+             'input_token': response.usage.prompt_tokens,
+             'output_token': response.usage.completion_tokens,
              'token': response.usage.prompt_tokens + response.usage.completion_tokens})
         return response
 

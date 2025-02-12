@@ -102,7 +102,7 @@ class GoogleAIClient(AbstractLLMEngine):
     async def generate_parallel(self, messages, generation_params):
         tasks = [asyncio.create_task(
             self._async_generate(message, generation_params)) for message in messages]
-        responses = [await task for task in tasks]
+        responses = await asyncio.gather(*tasks)
         return responses
     
 
@@ -179,7 +179,8 @@ class GoogleAIWorker(AbstractLLMWorker):
     
     def _parse_inputs(self, inputs: list[dict]):
         parsed_inputs = []
-        for input_dict in inputs:
+        for _input_dict in inputs:
+            input_dict = _input_dict.copy()
             if 'role' not in input_dict.keys():
                 input_dict['role'] = 'user'
             role = input_dict.pop('role')

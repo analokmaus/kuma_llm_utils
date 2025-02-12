@@ -112,7 +112,7 @@ class AnthropicClient(AbstractLLMEngine):
     async def generate_parallel(self, messages, generation_params):
         tasks = [asyncio.create_task(
             self._async_generate(message, generation_params)) for message in messages]
-        responses = [await task for task in tasks]
+        responses = await asyncio.gather(*tasks)
         return responses
 
 
@@ -193,16 +193,22 @@ class AnthropicWorker(AbstractLLMWorker):
 
     def _parse_inputs(self, inputs: list[dict]):
         parsed_inputs = []
-        for input_dict in inputs:
+        for _input_dict in inputs:
+            input_dict = _input_dict.copy()
             if 'role' not in input_dict.keys():
                 input_dict['role'] = 'user'
             role = input_dict.pop('role')
             if role == 'user':
                 parsed_input = self._get_prompt(**input_dict)
-            elif role in ['assistant', 'model']:
+            elif role in ['assistant', 'model', 'system']:
+                assert 'content' in input_dict.keys() or 'text' in input_dict.keys()
+                if 'text' in input_dict.keys():
+                    input_dict['content'] = input_dict.pop('text')
+                if role == 'model':
+                    role = 'assistant'
                 parsed_input = [{
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": input_dict['text']}],
+                    "role": role,
+                    "content": [{"type": "text", "text": input_dict['content']}],
                 }]
             else:
                 raise ValueError(f'{self.name} role {role} is not supported.')

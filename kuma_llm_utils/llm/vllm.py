@@ -104,7 +104,7 @@ class vLLMEngineAsync(AbstractLLMEngine):
                 prompt=prompt,
                 sampling_params=sampling_params,
                 request_id=uuid.uuid4())) for prompt in prompts]
-        responses = [await task for task in tasks]
+        responses = await asyncio.gather(*tasks)
         return responses
 
 
@@ -181,14 +181,20 @@ class vLLMWorkerAsync(AbstractLLMWorker):
     
     def _parse_inputs(self, inputs: list[dict]):
         parsed_inputs = []
-        for input_dict in inputs:
+        for _input_dict in inputs:
+            input_dict = _input_dict.copy()
             if 'role' not in input_dict.keys():
                 input_dict['role'] = 'user'
             role = input_dict.pop('role')
             if role == 'user':
                 parsed_input = self._get_prompt(**input_dict)
-            elif role in ['assistant', 'model']:
-                parsed_input = [{"role": "assistant", "content": input_dict['text']}]
+            elif role in ['assistant', 'model', 'system']:
+                assert 'content' in input_dict.keys() or 'text' in input_dict.keys()
+                if 'text' in input_dict.keys():
+                    input_dict['content'] = input_dict.pop('text')
+                if role == 'model':
+                    role = 'assistant'
+                parsed_input = [{"role": role, "content": input_dict['content']}]
             else:
                 raise ValueError(f'{self.name} role {role} is not supported.')
             parsed_inputs.extend(parsed_input)
@@ -310,14 +316,20 @@ class vLLMVisionWorkerAsync(vLLMWorkerAsync):
     
     def _parse_inputs(self, inputs: list[dict]):
         parsed_inputs = []
-        for input_dict in inputs:
+        for _input_dict in inputs:
+            input_dict = _input_dict.copy()
             if 'role' not in input_dict.keys():
                 input_dict['role'] = 'user'
             role = input_dict.pop('role')
             if role == 'user':
                 parsed_input = self._get_prompt(**input_dict)
-            elif role in ['assistant', 'model']:
-                parsed_input = [{"role": "assistant", "content": input_dict['text']}]
+            elif role in ['assistant', 'model', 'system']:
+                assert 'content' in input_dict.keys() or 'text' in input_dict.keys()
+                if 'text' in input_dict.keys():
+                    input_dict['content'] = input_dict.pop('text')
+                if role == 'model':
+                    role = 'assistant'
+                parsed_input = [{"role": role, "content": input_dict['content']}]
             else:
                 raise ValueError(f'{self.name} role {role} is not supported.')
             parsed_inputs.extend(parsed_input)

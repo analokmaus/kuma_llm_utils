@@ -17,6 +17,12 @@ Install latest version using pip:
 pip install git+https://github.com/analokmaus/kuma_llm_utils.git@main
 ```
 
+Install full latest version using pip:
+```bash
+pip install git+https://github.com/analokmaus/kuma_llm_utils.git@main
+pip install kuma_llm_utils[all]
+```
+
 # Usage
 - [Text-to-text generation using commercial APIs](examples/01_text_inference.ipynb)
 - [Multimodal generation using commercial APIs](examples/02_multimodal_inference.ipynb)
